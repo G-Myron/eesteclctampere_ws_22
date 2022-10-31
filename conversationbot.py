@@ -13,7 +13,7 @@ Press Ctrl-C on the command line or send a signal to the process to stop the
 bot.
 """
 
-import logging
+import logging, sqlite3
 
 from telegram import __version__ as TG_VER
 
@@ -51,12 +51,27 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Create database
+db = sqlite3.connect('database.db')
+# db.execute("DROP TABLE IF EXISTS users")
+db.execute("CREATE TABLE IF NOT EXISTS users(\
+	id INTEGER NOT NULL PRIMARY KEY,\
+	name TEXT, gender TEXT, photo TEXT,\
+    location TEXT, bio TEXT)")
+def savedb():
+    [print(i) for i in db.execute("SELECT * FROM users")]
+    db.commit()
+
+
 GENDER, PHOTO, LOCATION, BIO = range(4)
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Starts the conversation and asks the user about their gender."""
+    user = update.message.from_user
     reply_keyboard = [["Boy", "Girl", "Other"]]
+    db.execute("INSERT INTO users (name) VALUES (?)", [user.first_name])
+    savedb()
 
     await update.message.reply_text(
         "Hi! I am Myron's Bot ;) I will hold a conversation with you. "
@@ -74,6 +89,9 @@ async def gender(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Stores the selected gender and asks for a photo."""
     user = update.message.from_user
     logger.info("Gender of %s: %s", user.first_name, update.message.text)
+    db.execute("UPDATE users SET gender=? WHERE name=?", [update.message.text, user.first_name])
+    savedb()
+
     await update.message.reply_text(
         "I see! Please send me a photo of yourself, "
         "so I know what you look like, or send /skip if you don't want to.",
@@ -87,8 +105,13 @@ async def photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Stores the photo and asks for a location."""
     user = update.message.from_user
     photo_file = await update.message.photo[-1].get_file()
-    await photo_file.download("user_photo.jpg")
-    logger.info("Photo of %s: %s", user.first_name, "user_photo.jpg")
+    filename = "/static/" + user.first_name + user.last_name + ".jpg"
+    await photo_file.download(filename)
+    logger.info("Photo of %s: %s", user.first_name, filename)
+
+    db.execute("UPDATE users SET photo=? WHERE name=?", [filename, user.first_name])
+    savedb()
+
     await update.message.reply_text(
         "Gorgeous! Now, send me your location please, or send /skip if you don't want to."
     )
@@ -114,6 +137,10 @@ async def location(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     logger.info(
         "Location of %s: %f / %f", user.first_name, user_location.latitude, user_location.longitude
     )
+    
+    db.execute("UPDATE users SET location=? WHERE name=?", [user_location, user.first_name])
+    savedb()
+
     await update.message.reply_text(
         "Maybe I can visit you sometime! At last, tell me something about yourself."
     )
@@ -136,6 +163,9 @@ async def bio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Stores the info about the user and ends the conversation."""
     user = update.message.from_user
     logger.info("Bio of %s: %s", user.first_name, update.message.text)
+    db.execute("UPDATE users SET bio=? WHERE name=?", [update.message.text, user.first_name])
+    savedb()
+
     await update.message.reply_text("Thank you! I hope we can talk again some day.")
 
     return ConversationHandler.END
