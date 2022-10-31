@@ -59,7 +59,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     reply_keyboard = [["Boy", "Girl", "Other"]]
 
     await update.message.reply_text(
-        "Hi! My name is Professor Bot. I will hold a conversation with you. "
+        "Hi! I am Myron's Bot ;) I will hold a conversation with you. "
         "Send /cancel to stop talking to me.\n\n"
         "Are you a boy or a girl?",
         reply_markup=ReplyKeyboardMarkup(
