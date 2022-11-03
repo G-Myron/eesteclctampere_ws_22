@@ -16,6 +16,15 @@ bot.
 import logging, sqlite3
 
 from telegram import __version__ as TG_VER
+from telegram import ReplyKeyboardMarkup, ReplyKeyboardRemove, Update
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    ContextTypes,
+    ConversationHandler,
+    MessageHandler,
+    filters,
+)
 
 try:
     from telegram import __version_info__
@@ -28,15 +37,6 @@ if __version_info__ < (20, 0, 0, "alpha", 1):
         f"{TG_VER} version of this example, "
         f"visit https://docs.python-telegram-bot.org/en/v{TG_VER}/examples.html"
     )
-from telegram import ReplyKeyboardMarkup, ReplyKeyboardRemove, Update
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    ContextTypes,
-    ConversationHandler,
-    MessageHandler,
-    filters,
-)
 
 # using separate configuration and parser
 from configparser import ConfigParser
@@ -51,22 +51,41 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
 # Create database
 db = sqlite3.connect('database.db')
 # db.execute("DROP TABLE IF EXISTS users")
+def savedb():
+    print("Users Table:")
+    [print(i) for i in db.execute("SELECT * FROM users")]
+    print("HRV Table:")
+    [print(i) for i in db.execute("SELECT * FROM hrv")]
+    db.commit()
+
+
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """List the possible commands for the bot."""
+
+    await update.message.reply_text(
+        "Hi! These are your availiable commands:\n"
+        "/conv to have a casual conversation with me.\n"
+        "/input to store your HRV data."
+    )
+
+
+
+########## Conversation ##########
+
+GENDER, PHOTO, LOCATION, BIO = range(4)
+
 db.execute("CREATE TABLE IF NOT EXISTS users(\
 	id INTEGER NOT NULL PRIMARY KEY,\
 	name TEXT, gender TEXT, photo TEXT,\
     location TEXT, bio TEXT)")
-def savedb():
-    [print(i) for i in db.execute("SELECT * FROM users")]
-    db.commit()
 
 
-GENDER, PHOTO, LOCATION, BIO = range(4)
-
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def conv(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Starts the conversation and asks the user about their gender."""
     user = update.message.from_user
     reply_keyboard = [["Boy", "Girl", "Other"]]
@@ -105,7 +124,7 @@ async def photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Stores the photo and asks for a location."""
     user = update.message.from_user
     photo_file = await update.message.photo[-1].get_file()
-    filename = "/static/" + user.first_name + user.last_name + ".jpg"
+    filename = 'users/'+ user.first_name + user.last_name + ".jpg"
     await photo_file.download(filename)
     logger.info("Photo of %s: %s", user.first_name, filename)
 
@@ -179,7 +198,103 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         "Bye! I hope we can talk again some day.", reply_markup=ReplyKeyboardRemove()
     )
 
+    db.close()
+
     return ConversationHandler.END
+
+
+########## HRV APP ##########
+
+SUMMARY, GRAPHS, DETAILS = range(3)
+
+db.execute("CREATE TABLE IF NOT EXISTS hrv(\
+	id INTEGER NOT NULL PRIMARY KEY, name TEXT,\
+    summary TEXT, graphs TEXT, details TEXT)")
+def savedb():
+    [print(i) for i in db.execute("SELECT * FROM hrv")]
+    db.commit()
+
+
+async def hrv_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Starts the process of inputing hrv diagrams."""
+    user = update.message.from_user
+    logger.info("The user %s started hrv saving process", user.first_name)
+    db.execute("INSERT INTO hrv (name) VALUES (?)", [user.first_name])
+    savedb()
+
+    await update.message.reply_text(
+        "Hello there! I am the hrv bot.. \n"
+        "Now you can send me your HRV data and I'll store them in my database for you :)"
+        #"Or send /skip if you don't want to."
+    )
+
+    return SUMMARY
+
+
+async def summary(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    user = update.message.from_user
+    photo_file = await update.message.photo[-1].get_file()
+    filename = 'hrv/'+ user.first_name + user.last_name + "-summary" +".jpg"
+    await photo_file.download(filename)
+    logger.info("Photo of %s: %s", user.first_name, filename)
+
+    db.execute("UPDATE hrv SET summary=? WHERE name=?", [filename, user.first_name])
+    savedb()
+
+    await update.message.reply_text(
+        "Great! Your data has been saved in the DataBase! \n"
+        "Now you can send me  the HRV's graphs or input /skip to skip."
+    )
+
+    return GRAPHS
+
+
+async def graphs(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    user = update.message.from_user
+    photo_file = await update.message.photo[-1].get_file()
+    filename = 'hrv/'+ user.first_name + user.last_name + "-graphs" +".jpg"
+    await photo_file.download(filename)
+    logger.info("Photo of %s: %s", user.first_name, filename)
+
+    db.execute("UPDATE hrv SET graphs=? WHERE name=?", [filename, user.first_name])
+    savedb()
+
+    await update.message.reply_text(
+        "Great! Your graphs has been saved in the DataBase! \n"
+        "Now you can send me  the HRV's details or input /skip to skip."
+    )
+
+    return DETAILS
+
+
+async def details(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    user = update.message.from_user
+    photo_file = await update.message.photo[-1].get_file()
+    filename = 'hrv/'+ user.first_name + user.last_name + "-details" +".jpg"
+    await photo_file.download(filename)
+    logger.info("Photo of %s: %s", user.first_name, filename)
+
+    db.execute("UPDATE hrv SET details=? WHERE name=?", [filename, user.first_name])
+    savedb()
+
+    await update.message.reply_text(
+        "Great! Your hrv details has been saved in the DataBase! \n"
+        "Now all you HRV photos have been succesfully saved! :)"
+    )
+
+    return ConversationHandler.END
+
+
+async def skip_hrv(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Skips the rest of hrv after summary."""
+    user = update.message.from_user
+    logger.info("User %s did not send a photo.", user.first_name)
+    await update.message.reply_text(
+        "I bet you look great! Now, send me your location please, or send /skip."
+    )
+
+    return ConversationHandler.END
+
 
 
 def main() -> None:
@@ -189,7 +304,7 @@ def main() -> None:
 
     # Add conversation handler with the states GENDER, PHOTO, LOCATION and BIO
     conv_handler = ConversationHandler(
-        entry_points=[CommandHandler("start", start)],
+        entry_points=[CommandHandler("conv", conv)],
         states={
             GENDER: [MessageHandler(filters.Regex("^(Boy|Girl|Other)$"), gender)],
             PHOTO: [MessageHandler(filters.PHOTO, photo), CommandHandler("skip", skip_photo)],
@@ -202,10 +317,23 @@ def main() -> None:
         fallbacks=[CommandHandler("cancel", cancel)],
     )
 
-    application.add_handler(conv_handler)
+    hrv_handler = ConversationHandler(
+        entry_points=[CommandHandler("input", hrv_input)],
+        states={
+            SUMMARY: [MessageHandler(filters.PHOTO, summary)],
+            GRAPHS: [MessageHandler(filters.PHOTO, graphs), CommandHandler("skip", skip_hrv)],
+            DETAILS: [MessageHandler(filters.PHOTO, details), CommandHandler("skip", skip_hrv)],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+    )
 
-    # Run the bot until the user presses Ctrl-C
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(conv_handler)
+    application.add_handler(hrv_handler)
+
+    # Run the bot until the user presses Ctrl+C
     application.run_polling()
+
 
 
 if __name__ == "__main__":
