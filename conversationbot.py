@@ -13,7 +13,9 @@ Press Ctrl-C on the command line or send a signal to the process to stop the
 bot.
 """
 
-import logging, sqlite3
+import logging, sqlite3, requests, json, re
+import matplotlib.pyplot as plt
+from msilib.schema import Error
 
 from telegram import __version__ as TG_VER
 from telegram import ReplyKeyboardMarkup, ReplyKeyboardRemove, Update
@@ -41,6 +43,7 @@ if __version_info__ < (20, 0, 0, "alpha", 1):
 # using separate configuration and parser
 from configparser import ConfigParser
 
+
 # configparser
 cfg = ConfigParser()
 cfg.read('env.cfg')
@@ -54,7 +57,6 @@ logger = logging.getLogger(__name__)
 
 # Create database
 db = sqlite3.connect('database.db')
-# db.execute("DROP TABLE IF EXISTS users")
 def savedb():
     print("Users Table:")
     [print(i) for i in db.execute("SELECT * FROM users")]
@@ -68,11 +70,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """List the possible commands for the bot."""
 
     await update.message.reply_text(
-        "Hi! These are your availiable commands:\n"
+        "Hi! Here are your availiable commands:\n"
         "/conv to have a casual conversation with me.\n"
-        "/input to store your HRV data."
+        "/link to send your data.\n"
+        "/plot to plot your stored data.\n"
+        "/input to store your HRV photos.\n"
+        "/restore to restore/see your photos from the database.\n"
     )
-
 
 
 ########## Conversation ##########
@@ -81,7 +85,7 @@ GENDER, PHOTO, LOCATION, BIO = range(4)
 
 db.execute("CREATE TABLE IF NOT EXISTS users(\
 	id INTEGER NOT NULL PRIMARY KEY,\
-	name TEXT, gender TEXT, photo TEXT,\
+	name TEXT, gender TEXT,eresponsephoto TEXT,\
     location TEXT, bio TEXT)")
 
 
@@ -203,19 +207,19 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return ConversationHandler.END
 
 
-########## HRV APP ##########
+########## HRV APP WITH PHOTOS ##########
 
 SUMMARY, GRAPHS, DETAILS = range(3)
 
 db.execute("CREATE TABLE IF NOT EXISTS hrv(\
 	id INTEGER NOT NULL PRIMARY KEY, name TEXT,\
-    summary TEXT, graphs TEXT, details TEXT)")
+    summareresponse TEXT, graphs TEXT, details TEXT)")
 def savedb():
     [print(i) for i in db.execute("SELECT * FROM hrv")]
     db.commit()
 
 
-async def hrv_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def hrv_photos(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Starts the process of inputing hrv diagrams."""
     user = update.message.from_user
     logger.info("The user %s started hrv saving process", user.first_name)
@@ -225,7 +229,6 @@ async def hrv_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text(
         "Hello there! I am the hrv bot.. \n"
         "Now you can send me your HRV data and I'll store them in my database for you :)"
-        #"Or send /skip if you don't want to."
     )
 
     return SUMMARY
@@ -288,13 +291,83 @@ async def details(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 async def skip_hrv(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Skips the rest of hrv after summary."""
     user = update.message.from_user
-    logger.info("User %s did not send a photo.", user.first_name)
+    logger.info("User %s doesn't have any more hrv data.", user.first_name)
     await update.message.reply_text(
         "I bet you look great! Now, send me your location please, or send /skip."
     )
 
     return ConversationHandler.END
 
+
+########## HRV PHOTO SHOW ##########
+
+async def restore(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Restore the data stored for the user."""
+    user = update.message.from_user
+    logger.info("The data of user %s has been plotted.", user.first_name)
+    
+    data = db.execute("SELECT summary,graphs,details from hrv WHERE name=?", [user.first_name]).fetchall()
+
+    # str_data = "\n".join([" ".join(d) for d in data])
+
+    await update.message.reply_photo(photo=open(data[-1][0], 'rb'))
+    await update.message.reply_text("This is your Summary picture.")
+    for datafile, dataname in zip(data[-1][1:], ["Graphs","Details"]):
+        try:
+            await update.message.reply_photo(photo=open(datafile, 'rb'))
+            await update.message.reply_text(f"This is your {dataname}.")
+        except TypeError:
+            await update.message.reply_text(f"You haven't stored any {dataname}.. Use /input if you want to do so.")
+
+
+########## DATA PROCESSING ##########
+
+GETDATA, PLOT = range(2)
+
+async def hrv_ask_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Ask the user for his data."""
+    await update.message.reply_text("Please send me the link to your ecg4everybody.com hrv data.")
+
+    return GETDATA
+
+
+async def hrv_get_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Processes and plot the data stored for the user."""
+    user = update.message.from_user
+    filename = 'plots/'+ user.first_name+user.last_name +"-"
+    logger.info("HRV link of %s: %s", user.first_name, update.message.text)
+
+    resp = requests.post('https://ecg4everybody.com/service/getdata.php', data = {'i': re.search('i=(\w+)', update.message.text).group(1)})
+    resp = json.loads(resp.text)
+    # [print(r, resp[r]) for r in resp]
+    
+    for graph in resp['graph_arrays']:
+        data = graph['data']
+        scale = graph['scale'] if 'scale' in graph else ""
+        title = graph['title'] if 'title' in graph else ""
+        x_unit = graph['x_unit'] if 'x_unit' in graph else ""
+        y_unit = graph['y_unit'] if 'y_unit' in graph else ""
+
+        plt.plot([d/scale for d in data])
+        plt.title(title)
+        plt.xlabel(x_unit)
+        plt.ylabel(y_unit)
+        plt.savefig(filename + title +"_plot.png")
+        plt.close()
+
+    await update.message.reply_text("Your data has been succesfully stored in my database.")
+
+    return PLOT
+
+
+async def plot(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Processes and plot the data stored for the user."""
+    user = update.message.from_user
+    filename = 'plots/'+ user.first_name+user.last_name +"-"
+
+    for title in ['PSD', 'AR PSD']:
+        await update.message.reply_photo(photo=open(filename +title+'_plot.png', 'rb'))
+        await update.message.reply_text(f"This is the {title} graph from your data.")
 
 
 def main() -> None:
@@ -317,8 +390,8 @@ def main() -> None:
         fallbacks=[CommandHandler("cancel", cancel)],
     )
 
-    hrv_handler = ConversationHandler(
-        entry_points=[CommandHandler("input", hrv_input)],
+    hrv_photo_handler = ConversationHandler(
+        entry_points=[CommandHandler("input", hrv_photos)],
         states={
             SUMMARY: [MessageHandler(filters.PHOTO, summary)],
             GRAPHS: [MessageHandler(filters.PHOTO, graphs), CommandHandler("skip", skip_hrv)],
@@ -326,10 +399,23 @@ def main() -> None:
         },
         fallbacks=[CommandHandler("cancel", cancel)],
     )
+    
+    hrv_link_handler = ConversationHandler(
+        entry_points=[CommandHandler("link", hrv_ask_link)],
+        states={
+            GETDATA: [MessageHandler(filters.TEXT, hrv_get_link)],
+            PLOT: [MessageHandler(filters.TEXT, plot)],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+    )
+
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(conv_handler)
-    application.add_handler(hrv_handler)
+    application.add_handler(hrv_photo_handler)
+    application.add_handler(CommandHandler("restore", restore))
+    application.add_handler(hrv_link_handler)
+    application.add_handler(CommandHandler("plot", plot))
 
     # Run the bot until the user presses Ctrl+C
     application.run_polling()
